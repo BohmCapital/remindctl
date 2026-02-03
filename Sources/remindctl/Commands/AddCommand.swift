@@ -24,6 +24,21 @@ enum AddCommand {
               help: "none|low|medium|high",
               parsing: .singleValue
             ),
+            .make(
+              label: "location",
+              names: [.long("location")],
+              help: "Location address for geofence trigger",
+              parsing: .singleValue
+            ),
+            .make(
+              label: "radius",
+              names: [.long("radius")],
+              help: "Geofence radius in meters (default: 100)",
+              parsing: .singleValue
+            ),
+          ],
+          flags: [
+            .make(label: "leaving", names: [.long("leaving")], help: "Trigger when leaving location (default: arriving)"),
           ]
         )
       ),
@@ -31,6 +46,8 @@ enum AddCommand {
         "remindctl add \"Buy milk\"",
         "remindctl add --title \"Call mom\" --list Personal --due tomorrow",
         "remindctl add \"Review docs\" --priority high",
+        "remindctl add \"Check mailbox\" --location \"50 West St, New York, NY\"",
+        "remindctl add \"Lock up\" --location \"Home\" --leaving",
       ]
     ) { values, runtime in
       let titleOption = values.option("title")
@@ -56,9 +73,22 @@ enum AddCommand {
       let notes = values.option("notes")
       let dueValue = values.option("due")
       let priorityValue = values.option("priority")
+      let locationValue = values.option("location")
+      let isLeaving = values.flag("leaving")
+      let radiusValue = values.option("radius")
 
       let dueDate = try dueValue.map(CommandHelpers.parseDueDate)
       let priority = try priorityValue.map(CommandHelpers.parsePriority) ?? .none
+
+      // Build location trigger if specified
+      let locationTrigger: LocationTrigger?
+      if let address = locationValue {
+        let radius = radiusValue.flatMap { Double($0) } ?? 100.0
+        let proximity: LocationProximity = isLeaving ? .leaving : .arriving
+        locationTrigger = LocationTrigger(address: address, radius: radius, proximity: proximity)
+      } else {
+        locationTrigger = nil
+      }
 
       let store = RemindersStore()
       try await store.requestAccess()
@@ -73,7 +103,7 @@ enum AddCommand {
         throw RemindCoreError.operationFailed("No default list found. Specify --list.")
       }
 
-      let draft = ReminderDraft(title: title, notes: notes, dueDate: dueDate, priority: priority)
+      let draft = ReminderDraft(title: title, notes: notes, dueDate: dueDate, priority: priority, location: locationTrigger)
       let reminder = try await store.createReminder(draft, listName: targetList)
       OutputRenderer.printReminder(reminder, format: runtime.outputFormat)
     }

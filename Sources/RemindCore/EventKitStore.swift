@@ -1,3 +1,4 @@
+import CoreLocation
 import EventKit
 import Foundation
 
@@ -103,6 +104,13 @@ public actor RemindersStore {
     if let dueDate = draft.dueDate {
       reminder.dueDateComponents = calendarComponents(from: dueDate)
     }
+
+    // Handle location-based alarm
+    if let locationTrigger = draft.location {
+      let alarm = try await createLocationAlarm(from: locationTrigger)
+      reminder.addAlarm(alarm)
+    }
+
     try eventStore.save(reminder, commit: true)
     return ReminderItem(
       id: reminder.calendarItemIdentifier,
@@ -115,6 +123,33 @@ public actor RemindersStore {
       listID: reminder.calendar.calendarIdentifier,
       listName: reminder.calendar.title
     )
+  }
+
+  private func createLocationAlarm(from trigger: LocationTrigger) async throws -> EKAlarm {
+    let structuredLocation: EKStructuredLocation
+
+    if let lat = trigger.latitude, let lon = trigger.longitude {
+      // Use provided coordinates
+      structuredLocation = EKStructuredLocation(title: trigger.address)
+      structuredLocation.geoLocation = CLLocation(latitude: lat, longitude: lon)
+    } else {
+      // Geocode the address
+      let geocoder = CLGeocoder()
+      let placemarks = try await geocoder.geocodeAddressString(trigger.address)
+      guard let placemark = placemarks.first, let location = placemark.location else {
+        throw RemindCoreError.operationFailed("Could not geocode address: \(trigger.address)")
+      }
+      structuredLocation = EKStructuredLocation(title: trigger.address)
+      structuredLocation.geoLocation = location
+    }
+
+    structuredLocation.radius = trigger.radius
+
+    let alarm = EKAlarm()
+    alarm.structuredLocation = structuredLocation
+    alarm.proximity = trigger.proximity == .arriving ? .enter : .leave
+
+    return alarm
   }
 
   public func updateReminder(id: String, update: ReminderUpdate) async throws -> ReminderItem {
